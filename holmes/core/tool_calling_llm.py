@@ -23,9 +23,11 @@ from holmes.common.env_vars import (
     LOG_LLM_USAGE_RESPONSE,
     RESET_REPEATED_TOOL_CALL_CHECK_AFTER_COMPACTION,
     TEMPERATURE,
+    TOOL_SEARCH_ENABLED,
     load_bool,
 )
-from holmes.core.llm import LLM
+from holmes.core.llm import LLM, is_anthropic_model
+from holmes.core.tool_search import TOOL_SEARCH_TOOL
 from holmes.core.llm_usage import RequestStats
 from holmes.core.models import (
     FrontendToolResult,
@@ -497,10 +499,17 @@ class ToolCallingLLM:
         replace _connect placeholders for authenticated users.
         """
         user_id = (self._request_context or {}).get("user_id") if hasattr(self, "_request_context") else None
-        return self.tool_executor.get_all_tools_openai_format(
+        # Defer heavy tool schemas (MCP) and add a tool-search tool so the model
+        # loads them on demand — only for Anthropic models, which support it.
+        defer_loading = TOOL_SEARCH_ENABLED and is_anthropic_model(self.llm.model)
+        tools = self.tool_executor.get_all_tools_openai_format(
             include_restricted=self._should_include_restricted_tools(),
             user_id=user_id,
+            defer_loading=defer_loading,
         )
+        if defer_loading and any(tool.get("defer_loading") for tool in tools):
+            tools.append(TOOL_SEARCH_TOOL)
+        return tools
 
     @sentry_sdk.trace
     def call(  # type: ignore

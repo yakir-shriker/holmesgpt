@@ -62,6 +62,11 @@ SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0
 
 EXTRA_HEADERS = os.environ.get("EXTRA_HEADERS", "")
 THINKING = os.environ.get("THINKING", "")
+# Anthropic Tool Search (advanced tool use). When enabled and the active model is
+# an Anthropic/Claude model, heavy tool schemas (MCP toolsets) are marked
+# defer_loading=true and a tool-search tool is added, so the model loads those
+# definitions on demand instead of putting the whole catalog in context every turn.
+TOOL_SEARCH_ENABLED = load_bool("HOLMES_TOOL_SEARCH_ENABLED", False)
 REASONING_EFFORT = os.environ.get("REASONING_EFFORT", "").strip().lower()
 TEMPERATURE = float(os.environ.get("TEMPERATURE", "0.00000001"))
 

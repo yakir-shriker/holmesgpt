@@ -3,10 +3,38 @@ from unittest.mock import Mock
 from holmes.core.tools import (
     CallablePrerequisite,
     ToolsetStatusEnum,
+    ToolsetType,
 )
 from holmes.core.tools_utils.tool_executor import ToolExecutor
 from tests.conftest import create_mock_tool_invoke_context
 from tests.mocks.toolset_mocks import SampleToolset
+
+
+def _enabled_toolset(toolset_type=None):
+    toolset = SampleToolset(type=toolset_type) if toolset_type else SampleToolset()
+    toolset.status = ToolsetStatusEnum.ENABLED
+    return toolset
+
+
+def test_defer_loading_disabled_by_default():
+    """Without defer_loading, no tool carries the defer_loading flag."""
+    executor = ToolExecutor(toolsets=[_enabled_toolset(ToolsetType.MCP)])
+    tools = executor.get_all_tools_openai_format()
+    assert tools and all("defer_loading" not in t for t in tools)
+
+
+def test_defer_loading_marks_mcp_tools():
+    """MCP-toolset tools are tagged defer_loading=True when deferral is on."""
+    executor = ToolExecutor(toolsets=[_enabled_toolset(ToolsetType.MCP)])
+    tools = executor.get_all_tools_openai_format(defer_loading=True)
+    assert tools and all(t.get("defer_loading") is True for t in tools)
+
+
+def test_defer_loading_skips_non_mcp_tools():
+    """Built-in toolsets stay loaded (no defer flag) even when deferral is on."""
+    executor = ToolExecutor(toolsets=[_enabled_toolset(ToolsetType.BUILTIN)])
+    tools = executor.get_all_tools_openai_format(defer_loading=True)
+    assert tools and all("defer_loading" not in t for t in tools)
 
 
 def test_tool_executor_invoke_with_icon_url():

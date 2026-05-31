@@ -8,10 +8,16 @@ from holmes.core.tools import (
     Tool,
     Toolset,
     ToolsetStatusEnum,
+    ToolsetType,
 )
 from holmes.core.tools_utils.oauth_tool_connector import OAuthToolConnector
 
 display_logger = logging.getLogger("holmes.display.tool_executor")
+
+# Toolset types whose tools are deferred (loaded on demand via tool search) when
+# tool search is enabled. MCP servers dominate tool-schema bloat; built-in toolsets
+# (kubernetes, bash, etc.) stay loaded so common operations don't pay a search hop.
+DEFERRABLE_TOOLSET_TYPES = frozenset({ToolsetType.MCP})
 
 
 class ToolExecutor:
@@ -132,6 +138,7 @@ class ToolExecutor:
         self,
         include_restricted: bool = True,
         user_id: Optional[str] = None,
+        defer_loading: bool = False,
     ):
         """Get all tools in OpenAI format.
 
@@ -141,15 +148,28 @@ class ToolExecutor:
                                tools are explicitly enabled.
             user_id: If provided, replace OAuth _connect placeholders with the
                      user's real tools (loaded after authentication).
+            defer_loading: If True, tag tools from deferrable toolsets (MCP) with
+                     ``defer_loading: true`` so an Anthropic tool-search tool can
+                     load them on demand instead of up front.
         """
-        tools = self._get_base_tools(include_restricted)
+        tools = self._get_base_tools(include_restricted, defer_loading=defer_loading)
         return self.oauth_connector.apply_user_tools(tools, user_id, self._tool_to_toolset)
 
-    def _get_base_tools(self, include_restricted: bool = True) -> list:
+    def _get_base_tools(
+        self, include_restricted: bool = True, defer_loading: bool = False
+    ) -> list:
         """Get all tools in OpenAI format (base set, no per-user overrides)."""
         tools = []
         for tool in self.tools_by_name.values():
             if not include_restricted and tool._is_restricted():
                 continue
-            tools.append(tool.get_openai_format())
+            openai_tool = tool.get_openai_format()
+            if defer_loading and self._is_deferrable(tool.name):
+                openai_tool["defer_loading"] = True
+            tools.append(openai_tool)
         return tools
+
+    def _is_deferrable(self, tool_name: str) -> bool:
+        """Whether a tool's schema should be loaded on demand (via tool search)."""
+        toolset = self._tool_to_toolset.get(tool_name)
+        return toolset is not None and toolset.type in DEFERRABLE_TOOLSET_TYPES

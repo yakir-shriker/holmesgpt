@@ -24,6 +24,7 @@ from holmes.core.llm import LLM, ContextWindowUsage
 from holmes.core.models import PendingToolApproval, ToolApprovalDecision, ToolCallResult
 from holmes.core.llm_usage import RequestStats
 from holmes.core.tool_calling_llm import LLMInterruptedError, ToolCallingLLM
+from holmes.core.tool_search import TOOL_SEARCH_TOOL
 from holmes.core.tools import StructuredToolResult, StructuredToolResultStatus
 from holmes.core.tools_utils.tool_executor import ToolExecutor
 from holmes.core.truncation.input_context_window_limiter import (
@@ -1702,3 +1703,61 @@ class TestFrontendNoopToolFlow:
         tool_names = [t["function"]["name"] for t in tools_sent]
         assert "kubectl_get" in tool_names, "Backend tool should be included"
         assert "navigate_to_page" in tool_names, "Noop tool should be included"
+
+
+# ── Tool search / defer_loading gating (_get_tools) ──────────────────────────
+
+_DEFERRED_TOOL = {
+    "type": "function",
+    "function": {"name": "mcp_aws_call", "description": "d", "parameters": {}},
+    "defer_loading": True,
+}
+
+
+def test_get_tools_appends_search_tool_for_anthropic(
+    make_ai, mock_llm, mock_tool_executor
+):
+    """Flag on + Claude + a deferred tool → tool-search tool is appended and the
+    executor is asked to defer."""
+    mock_llm.model = "claude-opus-4-6"
+    mock_tool_executor.get_all_tools_openai_format.return_value = [_DEFERRED_TOOL]
+    ai = make_ai()
+    with patch("holmes.core.tool_calling_llm.TOOL_SEARCH_ENABLED", True):
+        tools = ai._get_tools()
+    assert (
+        mock_tool_executor.get_all_tools_openai_format.call_args.kwargs["defer_loading"]
+        is True
+    )
+    assert TOOL_SEARCH_TOOL in tools
+
+
+def test_get_tools_no_search_tool_for_non_anthropic(
+    make_ai, mock_llm, mock_tool_executor
+):
+    """Flag on but non-Anthropic model → never defer, never append search tool."""
+    mock_llm.model = "gpt-4o"
+    mock_tool_executor.get_all_tools_openai_format.return_value = [SIMPLE_TOOL_OPENAI]
+    ai = make_ai()
+    with patch("holmes.core.tool_calling_llm.TOOL_SEARCH_ENABLED", True):
+        tools = ai._get_tools()
+    assert (
+        mock_tool_executor.get_all_tools_openai_format.call_args.kwargs["defer_loading"]
+        is False
+    )
+    assert TOOL_SEARCH_TOOL not in tools
+
+
+def test_get_tools_no_search_tool_when_flag_off(
+    make_ai, mock_llm, mock_tool_executor
+):
+    """Flag off (default) → behavior is unchanged even for Claude."""
+    mock_llm.model = "claude-opus-4-6"
+    mock_tool_executor.get_all_tools_openai_format.return_value = [_DEFERRED_TOOL]
+    ai = make_ai()
+    with patch("holmes.core.tool_calling_llm.TOOL_SEARCH_ENABLED", False):
+        tools = ai._get_tools()
+    assert (
+        mock_tool_executor.get_all_tools_openai_format.call_args.kwargs["defer_loading"]
+        is False
+    )
+    assert TOOL_SEARCH_TOOL not in tools
