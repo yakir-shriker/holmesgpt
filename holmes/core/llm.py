@@ -607,10 +607,16 @@ class DefaultLLM(LLM):
             model=self.model, messages=bulk_messages
         )
 
+        # litellm's token_counter only understands OpenAI function tools; server
+        # tools such as the Anthropic tool-search tool (which have no "function"
+        # key) crash its _format_function_definitions helper. They're a handful of
+        # tokens, so exclude them from the count rather than letting them blow up.
+        countable_tools = [t for t in tools if t.get("function")] if tools else tools
+
         total_tokens = litellm.token_counter(  # type: ignore
             model=self.model,
             messages=bulk_messages,
-            tools=tools,  # type: ignore
+            tools=countable_tools,  # type: ignore
         )
 
         tools_to_call_tokens = max(0, total_tokens - messages_token_count_without_tools)

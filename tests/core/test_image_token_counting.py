@@ -203,3 +203,30 @@ def test_count_tokens_multi_image_conversation(
     # total_tokens = litellm bulk (on stripped msgs) + image tokens
     expected_total = text_tokens + expected_total_image_tokens if is_anthropic_model(model) else text_tokens
     assert result.total_tokens == expected_total
+
+
+# ---------- non-function (server) tools in count_tokens ----------
+
+
+def test_count_tokens_skips_non_function_server_tools():
+    """Server tools like the Anthropic tool-search tool have no 'function' key and
+    crash litellm's token_counter; count_tokens must filter them out first."""
+    llm = _make_llm("gpt-4o")
+    function_tool = {
+        "type": "function",
+        "function": {"name": "f", "description": "d", "parameters": {}},
+    }
+    server_tool = {"type": "tool_search_tool_regex_20251119", "name": "tool_search_tool_regex"}
+
+    captured: dict = {}
+
+    def fake_counter(model, messages, tools=None):
+        if tools is not None:
+            captured["tools"] = tools
+        return 5
+
+    with patch("litellm.token_counter", side_effect=fake_counter):
+        llm.count_tokens([{"role": "user", "content": "hi"}], [function_tool, server_tool])
+
+    # Only the OpenAI function tool reaches litellm; the server tool is dropped.
+    assert captured["tools"] == [function_tool]
